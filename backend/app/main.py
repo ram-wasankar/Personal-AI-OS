@@ -8,7 +8,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app.core.config import get_settings
 from app.core.logging import configure_logging, get_logger
-from app.db.mongodb import close_mongo, init_mongo
+from app.db.mongodb import close_mongo, init_mongo, warmup_mongo
 from app.middleware.observability import request_timing_middleware
 from app.routes.auth import router as auth_router
 from app.routes.chat import router as chat_router
@@ -26,9 +26,13 @@ async def lifespan(app: FastAPI):
     settings = get_settings()
     configure_logging(settings.log_level)
     settings.uploads_dir.mkdir(parents=True, exist_ok=True)
+    mongo_warmup_task: asyncio.Task | None = None
 
     try:
-        await asyncio.wait_for(init_mongo(), timeout=max(settings.mongo_connect_timeout_ms / 1000, 3))
+        await init_mongo()
+        mongo_warmup_task = asyncio.create_task(
+            asyncio.wait_for(warmup_mongo(), timeout=max(settings.mongo_connect_timeout_ms / 1000, 3))
+        )
     except TimeoutError:
         logger.warning(
             "startup_degraded_mongo_timeout",
@@ -67,6 +71,15 @@ async def lifespan(app: FastAPI):
 
     await ingestion_service.start()
     yield
+    if mongo_warmup_task is not None:
+        mongo_warmup_task.cancel()
+        try:
+            await mongo_warmup_task
+        except asyncio.CancelledError:
+            pass
+        except Exception:  # noqa: BLE001
+            pass
+
     await ingestion_service.stop()
     await cache_service.close()
     await close_mongo()
@@ -77,10 +90,12 @@ settings.uploads_dir.mkdir(parents=True, exist_ok=True)
 app = FastAPI(title=settings.app_name, lifespan=lifespan)
 logger = get_logger(__name__)
 
+allow_credentials = "*" not in settings.cors_origins
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
-    allow_credentials=True,
+    allow_credentials=allow_credentials,
     allow_methods=["*"],
     allow_headers=["*"],
 )

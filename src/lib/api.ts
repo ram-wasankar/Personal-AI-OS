@@ -116,11 +116,27 @@ class ApiRequestError extends Error {
 }
 
 const runtimeImportMeta = import.meta as ImportMeta & { env?: { VITE_API_URL?: string } };
-const API_BASE_URL = runtimeImportMeta.env?.VITE_API_URL ?? "http://localhost:8000";
+const API_BASE_URL = (runtimeImportMeta.env?.VITE_API_URL ?? "").trim();
 const TOKEN_KEY = "synapse_keeper_token";
 const USER_KEY = "synapse_keeper_user";
 
 function buildUrl(path: string) {
+  if (!API_BASE_URL) {
+    return path;
+  }
+
+  if (/^https?:\/\//i.test(path)) {
+    return path;
+  }
+
+  if (API_BASE_URL.endsWith("/") && path.startsWith("/")) {
+    return `${API_BASE_URL.slice(0, -1)}${path}`;
+  }
+
+  if (!API_BASE_URL.endsWith("/") && !path.startsWith("/")) {
+    return `${API_BASE_URL}/${path}`;
+  }
+
   return `${API_BASE_URL}${path}`;
 }
 

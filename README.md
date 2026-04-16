@@ -164,6 +164,27 @@ docker build -t synapse-keeper-api .
 docker run --rm -p 8000:8000 --env-file .env synapse-keeper-api
 ```
 
+## Vercel Frontend + Render Backend Connection
+
+This repository is configured for reliable cross-platform connection:
+
+- `render.yaml` defines backend deployment and CORS defaults.
+- `vercel.json` rewrites frontend same-origin routes to Render backend.
+- Frontend API client now defaults to same-origin when `VITE_API_URL` is unset.
+
+### Recommended production setup
+
+1. Deploy backend on Render using `render.yaml`.
+2. Deploy frontend on Vercel with this repo root.
+3. Keep `VITE_API_URL` unset in Vercel so requests use rewrites:
+	- `/api/*` -> Render backend `/api/*`
+	- `/uploads/*` -> Render backend `/uploads/*`
+4. Redeploy both services.
+
+### Local development
+
+- Set `VITE_API_URL=http://localhost:8000` in root `.env`.
+
 ## Render Deployment (Backend)
 
 This repository now includes [render.yaml](render.yaml) so Render runs the API from the correct backend directory.

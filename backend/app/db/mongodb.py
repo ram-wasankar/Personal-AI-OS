@@ -8,6 +8,7 @@ from app.core.config import get_settings
 
 _client: AsyncIOMotorClient | None = None
 _database: AsyncIOMotorDatabase | None = None
+_indexes_ready: bool = False
 
 
 def _utc_now() -> datetime:
@@ -27,8 +28,17 @@ async def init_mongo() -> None:
     )
     _database = _client[settings.mongo_db]
 
+
+async def warmup_mongo() -> None:
+    global _indexes_ready
+
+    if _client is None:
+        return
+
     await _client.admin.command("ping")
-    await ensure_indexes()
+    if not _indexes_ready:
+        await ensure_indexes()
+        _indexes_ready = True
 
 
 async def close_mongo() -> None:

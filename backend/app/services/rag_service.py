@@ -2,11 +2,13 @@ import json
 import time
 from datetime import datetime, timezone
 from threading import RLock
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 import faiss
 import numpy as np
-from sentence_transformers import SentenceTransformer
+
+if TYPE_CHECKING:
+    from sentence_transformers import SentenceTransformer
 
 from app.core.config import get_settings
 from app.core.logging import get_logger
@@ -20,7 +22,7 @@ logger = get_logger(__name__)
 class RagService:
     def __init__(self) -> None:
         self.settings = get_settings()
-        self._model: SentenceTransformer | None = None
+        self._model: Any | None = None
         self._index: faiss.IndexFlatIP | None = None
         self._metadata: list[dict] = []
         self._embedding_cache: dict[str, tuple[float, np.ndarray]] = {}
@@ -34,8 +36,10 @@ class RagService:
         self.settings.uploads_dir.mkdir(parents=True, exist_ok=True)
         self.settings.faiss_index_path.parent.mkdir(parents=True, exist_ok=True)
 
-    def _load_model(self) -> SentenceTransformer:
+    def _load_model(self) -> Any:
         if self._model is None:
+            from sentence_transformers import SentenceTransformer
+
             self._model = SentenceTransformer(self.settings.embedding_model)
         return self._model
 
