@@ -119,7 +119,7 @@ cp .env.example .env
 Set values in `backend/.env`:
 
 - `MONGO_URI` (MongoDB Atlas)
-- `JWT_SECRET`
+- `JWT_SECRET` (or `SECRET_KEY`)
 - `OPENAI_API_KEY` (optional but recommended)
 
 ### 3) Run

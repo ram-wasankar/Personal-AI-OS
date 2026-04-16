@@ -1,8 +1,9 @@
 import json
+import secrets
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import Field, field_validator
+from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import BaseSettings, EnvSettingsSource, PydanticBaseSettingsSource, SettingsConfigDict
 
 
@@ -19,7 +20,10 @@ class Settings(BaseSettings):
     mongo_uri: str = Field(alias="MONGO_URI")
     mongo_db: str = Field(default="synapse_keeper", alias="MONGO_DB")
 
-    jwt_secret: str = Field(alias="JWT_SECRET")
+    jwt_secret: str = Field(
+        default_factory=lambda: secrets.token_urlsafe(48),
+        validation_alias=AliasChoices("JWT_SECRET", "SECRET_KEY"),
+    )
     jwt_algorithm: str = "HS256"
     access_token_expire_minutes: int = 60 * 24 * 7
 
