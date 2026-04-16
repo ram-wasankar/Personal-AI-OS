@@ -3,7 +3,7 @@ from functools import lru_cache
 from pathlib import Path
 
 from pydantic import Field, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, EnvSettingsSource, PydanticBaseSettingsSource, SettingsConfigDict
 
 
 BASE_DIR = Path(__file__).resolve().parents[2]
@@ -53,8 +53,37 @@ class Settings(BaseSettings):
         env_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore",
-        enable_decoding=False,
     )
+
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls: type[BaseSettings],
+        init_settings: PydanticBaseSettingsSource,
+        env_settings: PydanticBaseSettingsSource,
+        dotenv_settings: PydanticBaseSettingsSource,
+        file_secret_settings: PydanticBaseSettingsSource,
+    ) -> tuple[PydanticBaseSettingsSource, ...]:
+        class RenderSafeEnvSettingsSource(EnvSettingsSource):
+            def prepare_field_value(
+                self,
+                field_name: str,
+                field,
+                value,
+                value_is_complex: bool,
+            ):
+                if field_name == "cors_origins" and isinstance(value, str):
+                    # Keep raw string and let the field validator normalize it.
+                    return value
+
+                return super().prepare_field_value(field_name, field, value, value_is_complex)
+
+        return (
+            init_settings,
+            RenderSafeEnvSettingsSource(settings_cls),
+            dotenv_settings,
+            file_secret_settings,
+        )
 
     @field_validator("cors_origins", mode="before")
     @classmethod
