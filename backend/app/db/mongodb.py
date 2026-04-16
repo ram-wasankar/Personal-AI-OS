@@ -18,7 +18,13 @@ async def init_mongo() -> None:
     global _client, _database
 
     settings = get_settings()
-    _client = AsyncIOMotorClient(settings.mongo_uri)
+    timeout_ms = max(int(settings.mongo_connect_timeout_ms), 1000)
+    _client = AsyncIOMotorClient(
+        settings.mongo_uri,
+        serverSelectionTimeoutMS=timeout_ms,
+        connectTimeoutMS=timeout_ms,
+        socketTimeoutMS=timeout_ms,
+    )
     _database = _client[settings.mongo_db]
 
     await _client.admin.command("ping")

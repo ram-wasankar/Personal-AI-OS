@@ -19,6 +19,7 @@ class Settings(BaseSettings):
 
     mongo_uri: str = Field(alias="MONGO_URI")
     mongo_db: str = Field(default="synapse_keeper", alias="MONGO_DB")
+    mongo_connect_timeout_ms: int = Field(default=8000, alias="MONGO_CONNECT_TIMEOUT_MS")
 
     jwt_secret: str = Field(
         default_factory=lambda: secrets.token_urlsafe(48),

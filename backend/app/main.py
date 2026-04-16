@@ -1,3 +1,4 @@
+import asyncio
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Request
@@ -26,7 +27,25 @@ async def lifespan(app: FastAPI):
     configure_logging(settings.log_level)
     settings.uploads_dir.mkdir(parents=True, exist_ok=True)
 
-    await init_mongo()
+    try:
+        await asyncio.wait_for(init_mongo(), timeout=max(settings.mongo_connect_timeout_ms / 1000, 3))
+    except TimeoutError:
+        logger.warning(
+            "startup_degraded_mongo_timeout",
+            extra={
+                "event": "startup_degraded_mongo_timeout",
+                "details": "MongoDB connection timed out during startup; service is running in degraded mode",
+            },
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "startup_degraded_mongo_unavailable",
+            extra={
+                "event": "startup_degraded_mongo_unavailable",
+                "details": f"MongoDB unavailable during startup: {exc}",
+            },
+        )
+
     await cache_service.initialize()
     await ingestion_service.start()
     yield
@@ -36,6 +55,7 @@ async def lifespan(app: FastAPI):
 
 
 settings = get_settings()
+settings.uploads_dir.mkdir(parents=True, exist_ok=True)
 app = FastAPI(title=settings.app_name, lifespan=lifespan)
 logger = get_logger(__name__)
 
