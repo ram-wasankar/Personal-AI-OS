@@ -10,11 +10,15 @@ import {
   ChevronsLeft,
   ChevronsRight,
   Zap,
+  LogOut,
 } from "lucide-react";
+import { ApiUser } from "@/lib/api";
 
 interface SidebarProps {
   activeView: string;
   onViewChange: (view: string) => void;
+  user: ApiUser | null;
+  onLogout: () => Promise<void>;
 }
 
 const navItems = [
@@ -26,7 +30,7 @@ const navItems = [
   { id: "insights", label: "Insights", icon: Sparkles },
 ];
 
-const Sidebar = ({ activeView, onViewChange }: SidebarProps) => {
+const Sidebar = ({ activeView, onViewChange, user, onLogout }: SidebarProps) => {
   const [collapsed, setCollapsed] = useState(false);
 
   return (
@@ -117,6 +121,27 @@ const Sidebar = ({ activeView, onViewChange }: SidebarProps) => {
           );
         })}
       </nav>
+
+      <div className="px-2.5 pb-2">
+        <button
+          onClick={() => {
+            void onLogout();
+          }}
+          className="w-full flex items-center justify-center gap-2 py-2 rounded-lg text-muted-foreground hover:text-foreground hover:bg-sidebar-accent transition-all duration-200 text-xs"
+        >
+          <LogOut className="w-3.5 h-3.5" />
+          {!collapsed && <span>Logout</span>}
+        </button>
+      </div>
+
+      {!collapsed && user && (
+        <div className="px-3 pb-2">
+          <div className="rounded-lg border border-border/60 bg-sidebar-accent/50 px-2.5 py-2">
+            <p className="text-xs font-medium text-foreground truncate">{user.fullName}</p>
+            <p className="text-[11px] text-muted-foreground truncate">{user.email}</p>
+          </div>
+        </div>
+      )}
 
       {/* Collapse */}
       <div className="px-2.5 pb-4">

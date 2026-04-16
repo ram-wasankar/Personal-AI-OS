@@ -1,12 +1,27 @@
 export interface ApiUser {
   id: string;
+  fullName: string;
   email: string;
+  createdAt: string;
+  lastLoginAt?: string | null;
+  lastLogoutAt?: string | null;
 }
 
 export interface AuthResponse {
   accessToken: string;
   tokenType: string;
   user: ApiUser;
+}
+
+export interface SignupPayload {
+  fullName: string;
+  email: string;
+  password: string;
+}
+
+export interface LoginPayload {
+  email: string;
+  password: string;
 }
 
 export interface ApiNote {
@@ -103,24 +118,42 @@ class ApiRequestError extends Error {
 const runtimeImportMeta = import.meta as ImportMeta & { env?: { VITE_API_URL?: string } };
 const API_BASE_URL = runtimeImportMeta.env?.VITE_API_URL ?? "http://localhost:8000";
 const TOKEN_KEY = "synapse_keeper_token";
-const DEVICE_KEY = "synapse_keeper_device_id";
+const USER_KEY = "synapse_keeper_user";
 
 function buildUrl(path: string) {
   return `${API_BASE_URL}${path}`;
 }
 
-function getDeviceIdentity() {
-  let deviceId = localStorage.getItem(DEVICE_KEY);
-  if (!deviceId) {
-    deviceId = crypto.randomUUID();
-    localStorage.setItem(DEVICE_KEY, deviceId);
+export function getStoredAuthToken(): string | null {
+  return localStorage.getItem(TOKEN_KEY);
+}
+
+export function hasStoredAuthToken(): boolean {
+  return Boolean(localStorage.getItem(TOKEN_KEY));
+}
+
+export function getStoredAuthUser(): ApiUser | null {
+  const raw = localStorage.getItem(USER_KEY);
+  if (!raw) {
+    return null;
   }
 
-  const slug = deviceId.replace(/-/g, "").slice(0, 16);
-  return {
-    email: `device_${slug}@synapse.local`,
-    password: `SynapseKeeper-${slug}`,
-  };
+  try {
+    return JSON.parse(raw) as ApiUser;
+  } catch {
+    localStorage.removeItem(USER_KEY);
+    return null;
+  }
+}
+
+function setAuthSession(payload: AuthResponse): void {
+  localStorage.setItem(TOKEN_KEY, payload.accessToken);
+  localStorage.setItem(USER_KEY, JSON.stringify(payload.user));
+}
+
+export function clearAuthSession(): void {
+  localStorage.removeItem(TOKEN_KEY);
+  localStorage.removeItem(USER_KEY);
 }
 
 async function parseErrorMessage(response: Response): Promise<string> {
@@ -135,42 +168,53 @@ async function parseErrorMessage(response: Response): Promise<string> {
   return `Request failed with status ${response.status}`;
 }
 
-async function bootstrapAuthToken(forceRefresh = false): Promise<string> {
-  if (!forceRefresh) {
-    const existing = localStorage.getItem(TOKEN_KEY);
-    if (existing) {
-      return existing;
-    }
-  }
+export async function signup(payload: SignupPayload): Promise<AuthResponse> {
+  const response = await apiRequest<AuthResponse>(
+    "/api/auth/signup",
+    {
+      method: "POST",
+      body: JSON.stringify(payload),
+    },
+    false,
+  );
+  setAuthSession(response);
+  return response;
+}
 
-  const { email, password } = getDeviceIdentity();
+export async function login(payload: LoginPayload): Promise<AuthResponse> {
+  const response = await apiRequest<AuthResponse>(
+    "/api/auth/login",
+    {
+      method: "POST",
+      body: JSON.stringify(payload),
+    },
+    false,
+  );
+  setAuthSession(response);
+  return response;
+}
 
-  await fetch(buildUrl("/api/auth/signup"), {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email, password }),
-  });
+export async function getCurrentUser(): Promise<ApiUser> {
+  const user = await apiRequest<ApiUser>("/api/auth/me");
+  localStorage.setItem(USER_KEY, JSON.stringify(user));
+  return user;
+}
 
-  const loginResponse = await fetch(buildUrl("/api/auth/login"), {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email, password }),
-  });
-
-  if (!loginResponse.ok) {
-    throw new ApiRequestError(loginResponse.status, await parseErrorMessage(loginResponse));
-  }
-
-  const authPayload: AuthResponse = await loginResponse.json();
-  localStorage.setItem(TOKEN_KEY, authPayload.accessToken);
-  return authPayload.accessToken;
+export async function logout(): Promise<void> {
+  await apiRequest<{ message: string }>(
+    "/api/auth/logout",
+    {
+      method: "POST",
+    },
+    true,
+  );
+  clearAuthSession();
 }
 
 async function apiRequest<T>(
   path: string,
   options: RequestInit = {},
   requiresAuth = true,
-  retryOnUnauthorized = true,
 ): Promise<T> {
   const headers = new Headers(options.headers ?? {});
 
@@ -179,7 +223,10 @@ async function apiRequest<T>(
   }
 
   if (requiresAuth) {
-    const token = await bootstrapAuthToken();
+    const token = getStoredAuthToken();
+    if (!token) {
+      throw new ApiRequestError(401, "Not authenticated");
+    }
     headers.set("Authorization", `Bearer ${token}`);
   }
 
@@ -188,10 +235,8 @@ async function apiRequest<T>(
     headers,
   });
 
-  if (response.status === 401 && requiresAuth && retryOnUnauthorized) {
-    localStorage.removeItem(TOKEN_KEY);
-    await bootstrapAuthToken(true);
-    return apiRequest<T>(path, options, requiresAuth, false);
+  if (response.status === 401 && requiresAuth) {
+    clearAuthSession();
   }
 
   if (!response.ok) {
@@ -251,9 +296,12 @@ export async function sendChatMessage(query: string, conversationId?: string) {
 async function streamRequest(
   path: string,
   payload: object,
-  retryOnUnauthorized = true,
 ) {
-  const token = await bootstrapAuthToken();
+  const token = getStoredAuthToken();
+  if (!token) {
+    throw new ApiRequestError(401, "Not authenticated");
+  }
+
   const response = await fetch(buildUrl(path), {
     method: "POST",
     headers: {
@@ -263,9 +311,8 @@ async function streamRequest(
     body: JSON.stringify(payload),
   });
 
-  if (response.status === 401 && retryOnUnauthorized) {
-    localStorage.removeItem(TOKEN_KEY);
-    return streamRequest(path, payload, false);
+  if (response.status === 401) {
+    clearAuthSession();
   }
 
   if (!response.ok) {

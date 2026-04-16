@@ -30,6 +30,8 @@ Auth:
 
 - `POST /api/auth/signup`
 - `POST /api/auth/login`
+- `GET /api/auth/me`
+- `POST /api/auth/logout`
 
 Notes:
 
@@ -148,7 +150,8 @@ Frontend default API target is `http://localhost:8000`.
 
 ## Notes
 
-- The frontend auto-creates a device-scoped account on first run and logs in silently, so no login UI redesign was required.
+- The frontend now uses explicit Sign up and Login screens and stores authenticated session data in local storage.
+- User profile/auth metadata is persisted in MongoDB users collection (`full_name`, `email`, `password_hash`, `created_at`, `updated_at`, `last_login_at`, `last_logout_at`).
 - FAISS metadata is persisted at `backend/storage/faiss_meta.json` and index at `backend/storage/faiss.index`.
 
 ## Docker (Backend)

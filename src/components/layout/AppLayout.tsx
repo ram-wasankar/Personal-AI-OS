@@ -7,6 +7,7 @@ import DocumentsView from "../views/DocumentsView";
 import MemoryView from "../views/MemoryView";
 import InsightsView from "../views/InsightsView";
 import { motion, AnimatePresence } from "framer-motion";
+import { useAuth } from "@/contexts/AuthContext";
 
 const views: Record<string, React.ComponentType> = {
   dashboard: DashboardView,
@@ -19,6 +20,7 @@ const views: Record<string, React.ComponentType> = {
 
 const AppLayout = () => {
   const [activeView, setActiveView] = useState("dashboard");
+  const { user, logout } = useAuth();
   const ActiveComponent = views[activeView] || DashboardView;
 
   useEffect(() => {
@@ -38,7 +40,7 @@ const AppLayout = () => {
 
   return (
     <div className="flex h-screen overflow-hidden bg-background">
-      <Sidebar activeView={activeView} onViewChange={setActiveView} />
+      <Sidebar activeView={activeView} onViewChange={setActiveView} user={user} onLogout={logout} />
       <main className="flex-1 overflow-hidden">
         <AnimatePresence mode="wait">
           <motion.div

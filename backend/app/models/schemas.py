@@ -14,6 +14,7 @@ class APIModel(BaseModel):
 
 
 class UserCreate(APIModel):
+    full_name: str = Field(min_length=2, max_length=80)
     email: EmailStr
     password: str = Field(min_length=8, max_length=128)
 
@@ -25,13 +26,21 @@ class UserLogin(APIModel):
 
 class UserPublic(APIModel):
     id: str
+    full_name: str
     email: EmailStr
+    created_at: datetime
+    last_login_at: datetime | None = None
+    last_logout_at: datetime | None = None
 
 
 class AuthResponse(APIModel):
     access_token: str
     token_type: str = "bearer"
     user: UserPublic
+
+
+class LogoutResponse(APIModel):
+    message: str = "Logged out successfully"
 
 
 class NoteCreate(APIModel):
