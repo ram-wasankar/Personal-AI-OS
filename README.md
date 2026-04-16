@@ -163,3 +163,23 @@ cd backend
 docker build -t synapse-keeper-api .
 docker run --rm -p 8000:8000 --env-file .env synapse-keeper-api
 ```
+
+## Render Deployment (Backend)
+
+This repository now includes [render.yaml](render.yaml) so Render runs the API from the correct backend directory.
+
+### Deploy steps
+
+1. In Render, create a new Blueprint service from this repository.
+2. Render will read [render.yaml](render.yaml) and create `synapse-keeper-api` as a Python web service.
+3. In the service Environment tab, set the following required values:
+	- `MONGO_URI` (MongoDB Atlas connection string)
+	- `CORS_ORIGINS` (comma-separated allowed origins; include your frontend URL)
+4. Optional values:
+	- `OPENAI_API_KEY`
+	- `REDIS_URL`
+
+### Why the previous deploy failed
+
+- Running `uvicorn app.main:app` from repository root fails because the app module is under [backend/app/main.py](backend/app/main.py).
+- The Blueprint fixes this by using `rootDir: backend` and starting with `uvicorn app.main:app --host 0.0.0.0 --port $PORT`.
