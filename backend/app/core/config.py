@@ -44,6 +44,7 @@ class Settings(BaseSettings):
     memory_top_k: int = Field(default=5, alias="MEMORY_TOP_K")
 
     redis_url: str | None = Field(default=None, alias="REDIS_URL")
+    redis_connect_timeout_ms: int = Field(default=3000, alias="REDIS_CONNECT_TIMEOUT_MS")
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
 
     cors_origins: list[str] = Field(

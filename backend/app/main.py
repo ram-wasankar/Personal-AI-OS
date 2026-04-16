@@ -46,7 +46,25 @@ async def lifespan(app: FastAPI):
             },
         )
 
-    await cache_service.initialize()
+    try:
+        await asyncio.wait_for(cache_service.initialize(), timeout=max(settings.redis_connect_timeout_ms / 1000, 2))
+    except TimeoutError:
+        logger.warning(
+            "startup_degraded_cache_timeout",
+            extra={
+                "event": "startup_degraded_cache_timeout",
+                "details": "Redis initialization timed out during startup; using in-memory cache",
+            },
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "startup_degraded_cache_unavailable",
+            extra={
+                "event": "startup_degraded_cache_unavailable",
+                "details": f"Cache initialization unavailable during startup: {exc}",
+            },
+        )
+
     await ingestion_service.start()
     yield
     await ingestion_service.stop()

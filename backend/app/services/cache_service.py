@@ -53,11 +53,23 @@ class CacheService:
         if not self.settings.redis_url or RedisClient is None:
             return
 
+        timeout_seconds = max(self.settings.redis_connect_timeout_ms / 1000, 1.0)
         try:
-            redis_client = RedisClient.from_url(self.settings.redis_url, decode_responses=True)
-            await redis_client.ping()
+            redis_client = RedisClient.from_url(
+                self.settings.redis_url,
+                decode_responses=True,
+                socket_connect_timeout=timeout_seconds,
+                socket_timeout=timeout_seconds,
+            )
+            await asyncio.wait_for(redis_client.ping(), timeout=timeout_seconds)
             self._redis = redis_client
             logger.info("cache_ready", extra={"event": "cache_ready", "details": "redis"})
+        except TimeoutError:
+            logger.warning(
+                "cache_fallback",
+                extra={"event": "cache_fallback", "details": "in-memory due to: redis startup timeout"},
+            )
+            self._redis = None
         except Exception as exc:  # noqa: BLE001
             logger.warning(
                 "cache_fallback",
