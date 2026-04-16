@@ -179,6 +179,11 @@ This repository now includes [render.yaml](render.yaml) so Render runs the API f
 	- `OPENAI_API_KEY`
 	- `REDIS_URL`
 
+Python version pinning without dashboard option:
+
+- Set `PYTHON_VERSION=3.11.11` in [render.yaml](render.yaml) (already included).
+- Keep [.python-version](.python-version) and [backend/.python-version](backend/.python-version) in repo.
+
 ### Why the previous deploy failed
 
 - Running `uvicorn app.main:app` from repository root fails because the app module is under [backend/app/main.py](backend/app/main.py).
