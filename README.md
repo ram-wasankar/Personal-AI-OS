@@ -174,7 +174,7 @@ This repository now includes [render.yaml](render.yaml) so Render runs the API f
 2. Render will read [render.yaml](render.yaml) and create `synapse-keeper-api` as a Python web service.
 3. In the service Environment tab, set the following required values:
 	- `MONGO_URI` (MongoDB Atlas connection string)
-	- `CORS_ORIGINS` (comma-separated allowed origins; include your frontend URL)
+	- `CORS_ORIGINS` (comma-separated allowed origins; include your frontend URL, for example `https://your-frontend.onrender.com,http://localhost:8080`)
 4. Optional values:
 	- `OPENAI_API_KEY`
 	- `REDIS_URL`
