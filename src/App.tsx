@@ -29,7 +29,7 @@ function ProtectedRoute({ children }: { children: JSX.Element }) {
 }
 
 function PublicOnlyRoute({ children }: { children: JSX.Element }) {
-  const { isAuthenticated, isLoading } = useAuth();
+  const { isLoading } = useAuth();
 
   if (isLoading) {
     return (
@@ -37,10 +37,6 @@ function PublicOnlyRoute({ children }: { children: JSX.Element }) {
         Loading session...
       </div>
     );
-  }
-
-  if (isAuthenticated) {
-    return <Navigate to="/" replace />;
   }
 
   return children;
