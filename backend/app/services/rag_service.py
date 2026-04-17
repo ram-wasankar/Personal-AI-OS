@@ -1,4 +1,5 @@
 import json
+import re
 import time
 from datetime import datetime, timezone
 from threading import RLock
@@ -23,10 +24,12 @@ class RagService:
     def __init__(self) -> None:
         self.settings = get_settings()
         self._model: Any | None = None
+        self._model_unavailable = False
         self._index: faiss.IndexFlatIP | None = None
         self._metadata: list[dict] = []
         self._embedding_cache: dict[str, tuple[float, np.ndarray]] = {}
         self._embedding_cache_ttl = self.settings.embedding_cache_ttl_seconds
+        self._fallback_dim = 384
         self._retrieval_version = 0
         self._lock = RLock()
         self._initialize_storage()
@@ -38,10 +41,51 @@ class RagService:
 
     def _load_model(self) -> Any:
         if self._model is None:
+            if self._model_unavailable:
+                raise RuntimeError("Embedding model unavailable")
+
             from sentence_transformers import SentenceTransformer
 
-            self._model = SentenceTransformer(self.settings.embedding_model)
+            try:
+                self._model = SentenceTransformer(self.settings.embedding_model)
+            except Exception:
+                self._model_unavailable = True
+                raise
         return self._model
+
+    def _fallback_embed_texts(self, texts: list[str]) -> np.ndarray:
+        vectors = np.zeros((len(texts), self._fallback_dim), dtype=np.float32)
+
+        for row_index, text in enumerate(texts):
+            tokens = re.findall(r"\w+", text.lower())
+            if not tokens:
+                continue
+
+            for token in tokens:
+                base = hash(token)
+                feature_index = abs(base) % self._fallback_dim
+                sign = -1.0 if hash(f"{token}#") % 2 else 1.0
+                vectors[row_index, feature_index] += sign
+
+            norm = np.linalg.norm(vectors[row_index])
+            if norm > 0:
+                vectors[row_index] /= norm
+
+        return vectors
+
+    def _generate_embeddings(self, texts: list[str]) -> np.ndarray:
+        try:
+            model = self._load_model()
+            return np.array(model.encode(texts, normalize_embeddings=True), dtype=np.float32)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "embedding_fallback_enabled",
+                extra={
+                    "event": "embedding_fallback_enabled",
+                    "details": f"Using deterministic fallback embeddings due to: {exc}",
+                },
+            )
+            return self._fallback_embed_texts(texts)
 
     def _load_state(self) -> None:
         meta_path = self.settings.faiss_meta_path
@@ -112,7 +156,7 @@ class RagService:
 
     def embed_texts(self, texts: list[str]) -> np.ndarray:
         if not texts:
-            return np.zeros((0, 384), dtype=np.float32)
+            return np.zeros((0, self._fallback_dim), dtype=np.float32)
 
         resolved: list[np.ndarray | None] = [None] * len(texts)
         missing_positions: list[int] = []
@@ -127,8 +171,7 @@ class RagService:
                 missing_texts.append(text)
 
         if missing_texts:
-            model = self._load_model()
-            generated = np.array(model.encode(missing_texts, normalize_embeddings=True), dtype=np.float32)
+            generated = self._generate_embeddings(missing_texts)
             for relative_index, absolute_index in enumerate(missing_positions):
                 vector = generated[relative_index]
                 resolved[absolute_index] = vector
@@ -151,31 +194,42 @@ class RagService:
         if not chunks:
             return 0
 
-        vectors = self.embed_texts(chunks)
+        try:
+            vectors = self.embed_texts(chunks)
 
-        with self._lock:
-            if self._index is None:
-                self._index = faiss.IndexFlatIP(vectors.shape[1])
+            with self._lock:
+                if self._index is None:
+                    self._index = faiss.IndexFlatIP(vectors.shape[1])
 
-            self._index.add(vectors)
-            now = datetime.now(timezone.utc).isoformat()
+                self._index.add(vectors)
+                now = datetime.now(timezone.utc).isoformat()
 
-            for idx, chunk in enumerate(chunks):
-                self._metadata.append(
-                    {
-                        "user_id": user_id,
-                        "source_type": source_type,
-                        "source_id": source_id,
-                        "source_label": source_label,
-                        "doc_type": doc_type,
-                        "chunk": chunk,
-                        "embedding": vectors[idx].tolist(),
-                        "created_at": now,
-                    }
-                )
+                for idx, chunk in enumerate(chunks):
+                    self._metadata.append(
+                        {
+                            "user_id": user_id,
+                            "source_type": source_type,
+                            "source_id": source_id,
+                            "source_label": source_label,
+                            "doc_type": doc_type,
+                            "chunk": chunk,
+                            "embedding": vectors[idx].tolist(),
+                            "created_at": now,
+                        }
+                    )
 
-            self._retrieval_version += 1
-            self._persist()
+                self._retrieval_version += 1
+                self._persist()
+        except Exception as exc:  # noqa: BLE001
+            logger.exception(
+                "rag_add_source_failed",
+                extra={
+                    "event": "rag_add_source_failed",
+                    "user_id": user_id,
+                    "details": str(exc),
+                },
+            )
+            return 0
 
         return len(chunks)
 
@@ -223,123 +277,134 @@ class RagService:
         source_types: list[str] | None = None,
         doc_type: str | None = None,
     ) -> list[dict]:
-        started = time.perf_counter()
-        requested_top_k = top_k or self.settings.rag_top_k
-        source_type_set = set(source_types) if source_types else None
-        cache_key = (
-            f"retrieval:{user_id}:{self._retrieval_version}:{requested_top_k}:"
-            f"{','.join(sorted(source_type_set)) if source_type_set else 'all'}:{doc_type or 'all'}:{hash(query_text)}"
-        )
-
-        cached = await cache_service.get(cache_key)
-        if cached is not None:
-            return cached
-
-        with self._lock:
-            if self._index is None or not self._metadata:
-                return []
-
-            candidate_pool = min(max(requested_top_k * 10, requested_top_k), len(self._metadata))
-            query_vector = self.embed_texts([query_text])
-            scores, indexes = self._index.search(query_vector, candidate_pool)
-
-            semantic_candidates: list[dict[str, Any]] = []
-            for score, idx in zip(scores[0], indexes[0], strict=False):
-                if idx < 0:
-                    continue
-                metadata = self._metadata[idx]
-                if not self._filter_candidate(metadata, user_id, source_type_set, doc_type):
-                    continue
-                semantic_candidates.append(
-                    {
-                        "key": f"{metadata['source_id']}::{idx}",
-                        "source_id": metadata["source_id"],
-                        "source_type": metadata["source_type"],
-                        "label": metadata["source_label"],
-                        "excerpt": metadata["chunk"],
-                        "semantic_score": float(score),
-                        "keyword_score": 0.0,
-                        "created_at": metadata.get("created_at"),
-                    }
-                )
-
-            keyword_candidates: list[dict[str, Any]] = []
-            for idx, metadata in enumerate(self._metadata):
-                if not self._filter_candidate(metadata, user_id, source_type_set, doc_type):
-                    continue
-                keyword_score = bm25_like_score(query_text, metadata.get("chunk", ""))
-                if keyword_score <= 0:
-                    continue
-                keyword_candidates.append(
-                    {
-                        "key": f"{metadata['source_id']}::{idx}",
-                        "source_id": metadata["source_id"],
-                        "source_type": metadata["source_type"],
-                        "label": metadata["source_label"],
-                        "excerpt": metadata["chunk"],
-                        "semantic_score": 0.0,
-                        "keyword_score": keyword_score,
-                        "created_at": metadata.get("created_at"),
-                    }
-                )
-
-        keyword_candidates.sort(key=lambda item: item["keyword_score"], reverse=True)
-        keyword_candidates = keyword_candidates[: max(requested_top_k * 6, requested_top_k)]
-
-        merged: dict[str, dict[str, Any]] = {}
-        for candidate in semantic_candidates + keyword_candidates:
-            existing = merged.get(candidate["key"])
-            if not existing:
-                merged[candidate["key"]] = candidate
-                continue
-
-            existing["semantic_score"] = max(existing["semantic_score"], candidate["semantic_score"])
-            existing["keyword_score"] = max(existing["keyword_score"], candidate["keyword_score"])
-
-        all_candidates = list(merged.values())
-        max_keyword = max((item["keyword_score"] for item in all_candidates), default=1.0)
-
-        reranked: list[dict] = []
-        for item in all_candidates:
-            semantic_norm = self._semantic_normalize(item["semantic_score"])
-            keyword_norm = (item["keyword_score"] / max_keyword) if max_keyword > 0 else 0.0
-            recency = self._recency_boost(item.get("created_at"))
-            final_score = (0.62 * semantic_norm) + (0.28 * keyword_norm) + (0.10 * recency)
-
-            reranked.append(
-                {
-                    "source_id": item["source_id"],
-                    "source_type": item["source_type"],
-                    "label": item["label"],
-                    "score": float(final_score),
-                    "confidence": float(max(0.0, min(final_score, 1.0))),
-                    "semantic_score": float(semantic_norm),
-                    "keyword_score": float(keyword_norm),
-                    "excerpt": item["excerpt"],
-                }
+        try:
+            started = time.perf_counter()
+            requested_top_k = top_k or self.settings.rag_top_k
+            source_type_set = set(source_types) if source_types else None
+            cache_key = (
+                f"retrieval:{user_id}:{self._retrieval_version}:{requested_top_k}:"
+                f"{','.join(sorted(source_type_set)) if source_type_set else 'all'}:{doc_type or 'all'}:{hash(query_text)}"
             )
 
-        reranked.sort(key=lambda candidate: candidate["score"], reverse=True)
-        results = reranked[:requested_top_k]
+            cached = await cache_service.get(cache_key)
+            if cached is not None:
+                return cached
 
-        latency_ms = round((time.perf_counter() - started) * 1000, 2)
-        logger.info(
-            "rag_query",
-            extra={
-                "event": "rag_query",
-                "user_id": user_id,
-                "latency_ms": latency_ms,
-                "details": {
-                    "query_length": len(query_text),
-                    "chunks_retrieved": len(results),
-                    "semantic_candidates": len(semantic_candidates),
-                    "keyword_candidates": len(keyword_candidates),
+            with self._lock:
+                if self._index is None or not self._metadata:
+                    return []
+
+                candidate_pool = min(max(requested_top_k * 10, requested_top_k), len(self._metadata))
+                query_vector = self.embed_texts([query_text])
+                scores, indexes = self._index.search(query_vector, candidate_pool)
+
+                semantic_candidates: list[dict[str, Any]] = []
+                for score, idx in zip(scores[0], indexes[0], strict=False):
+                    if idx < 0:
+                        continue
+                    metadata = self._metadata[idx]
+                    if not self._filter_candidate(metadata, user_id, source_type_set, doc_type):
+                        continue
+                    semantic_candidates.append(
+                        {
+                            "key": f"{metadata['source_id']}::{idx}",
+                            "source_id": metadata["source_id"],
+                            "source_type": metadata["source_type"],
+                            "label": metadata["source_label"],
+                            "excerpt": metadata["chunk"],
+                            "semantic_score": float(score),
+                            "keyword_score": 0.0,
+                            "created_at": metadata.get("created_at"),
+                        }
+                    )
+
+                keyword_candidates: list[dict[str, Any]] = []
+                for idx, metadata in enumerate(self._metadata):
+                    if not self._filter_candidate(metadata, user_id, source_type_set, doc_type):
+                        continue
+                    keyword_score = bm25_like_score(query_text, metadata.get("chunk", ""))
+                    if keyword_score <= 0:
+                        continue
+                    keyword_candidates.append(
+                        {
+                            "key": f"{metadata['source_id']}::{idx}",
+                            "source_id": metadata["source_id"],
+                            "source_type": metadata["source_type"],
+                            "label": metadata["source_label"],
+                            "excerpt": metadata["chunk"],
+                            "semantic_score": 0.0,
+                            "keyword_score": keyword_score,
+                            "created_at": metadata.get("created_at"),
+                        }
+                    )
+
+            keyword_candidates.sort(key=lambda item: item["keyword_score"], reverse=True)
+            keyword_candidates = keyword_candidates[: max(requested_top_k * 6, requested_top_k)]
+
+            merged: dict[str, dict[str, Any]] = {}
+            for candidate in semantic_candidates + keyword_candidates:
+                existing = merged.get(candidate["key"])
+                if not existing:
+                    merged[candidate["key"]] = candidate
+                    continue
+
+                existing["semantic_score"] = max(existing["semantic_score"], candidate["semantic_score"])
+                existing["keyword_score"] = max(existing["keyword_score"], candidate["keyword_score"])
+
+            all_candidates = list(merged.values())
+            max_keyword = max((item["keyword_score"] for item in all_candidates), default=1.0)
+
+            reranked: list[dict] = []
+            for item in all_candidates:
+                semantic_norm = self._semantic_normalize(item["semantic_score"])
+                keyword_norm = (item["keyword_score"] / max_keyword) if max_keyword > 0 else 0.0
+                recency = self._recency_boost(item.get("created_at"))
+                final_score = (0.62 * semantic_norm) + (0.28 * keyword_norm) + (0.10 * recency)
+
+                reranked.append(
+                    {
+                        "source_id": item["source_id"],
+                        "source_type": item["source_type"],
+                        "label": item["label"],
+                        "score": float(final_score),
+                        "confidence": float(max(0.0, min(final_score, 1.0))),
+                        "semantic_score": float(semantic_norm),
+                        "keyword_score": float(keyword_norm),
+                        "excerpt": item["excerpt"],
+                    }
+                )
+
+            reranked.sort(key=lambda candidate: candidate["score"], reverse=True)
+            results = reranked[:requested_top_k]
+
+            latency_ms = round((time.perf_counter() - started) * 1000, 2)
+            logger.info(
+                "rag_query",
+                extra={
+                    "event": "rag_query",
+                    "user_id": user_id,
+                    "latency_ms": latency_ms,
+                    "details": {
+                        "query_length": len(query_text),
+                        "chunks_retrieved": len(results),
+                        "semantic_candidates": len(semantic_candidates),
+                        "keyword_candidates": len(keyword_candidates),
+                    },
                 },
-            },
-        )
+            )
 
-        await cache_service.set(cache_key, results, self.settings.retrieval_cache_ttl_seconds)
-        return results
+            await cache_service.set(cache_key, results, self.settings.retrieval_cache_ttl_seconds)
+            return results
+        except Exception as exc:  # noqa: BLE001
+            logger.exception(
+                "rag_query_failed",
+                extra={
+                    "event": "rag_query_failed",
+                    "user_id": user_id,
+                    "details": str(exc),
+                },
+            )
+            return []
 
 
 rag_service = RagService()

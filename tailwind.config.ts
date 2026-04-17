@@ -12,8 +12,8 @@ export default {
     },
     extend: {
       fontFamily: {
-        sans: ["Inter", "-apple-system", "BlinkMacSystemFont", "sans-serif"],
-        mono: ["JetBrains Mono", "monospace"],
+        sans: ["Sora", "-apple-system", "BlinkMacSystemFont", "sans-serif"],
+        mono: ["IBM Plex Mono", "monospace"],
       },
       colors: {
         border: "hsl(var(--border))",

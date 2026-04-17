@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState, type ChangeEvent, type DragEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type ChangeEvent, type DragEvent } from "react";
 import { motion } from "framer-motion";
-import { Upload, FileText, Search, MoreHorizontal, CheckCircle2, Loader2, Clock } from "lucide-react";
+import { Upload, FileText, Search, MoreHorizontal, CheckCircle2, Loader2, Clock, AlertTriangle, RefreshCw } from "lucide-react";
 
 import { getDocuments, uploadDocument, type ApiDocument } from "@/lib/api";
 import { formatFileSize, formatRelativeTime } from "@/lib/format";
@@ -11,8 +11,10 @@ const statusConfig = {
   ready: { icon: CheckCircle2, label: "Ready", className: "text-success" },
   processing: { icon: Loader2, label: "Processing", className: "text-warning animate-spin" },
   pending: { icon: Clock, label: "Pending", className: "text-muted-foreground" },
-  failed: { icon: Clock, label: "Failed", className: "text-destructive" },
+  failed: { icon: AlertTriangle, label: "Failed", className: "text-destructive" },
 };
+
+const ACTIVE_STATUSES = new Set(["uploading", "processing", "pending"]);
 
 const DocumentsView = () => {
   const [documents, setDocuments] = useState<ApiDocument[]>([]);
@@ -23,22 +25,41 @@ const DocumentsView = () => {
   const [error, setError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  useEffect(() => {
-    const loadDocuments = async () => {
-      try {
+  const loadDocuments = useCallback(async (showLoading = true) => {
+    try {
+      if (showLoading) {
         setIsLoading(true);
-        setError(null);
-        const payload = await getDocuments();
-        setDocuments(payload);
-      } catch (loadError) {
-        setError(loadError instanceof Error ? loadError.message : "Failed to load documents");
-      } finally {
+      }
+      setError(null);
+      const payload = await getDocuments();
+      setDocuments(payload);
+    } catch (loadError) {
+      setError(loadError instanceof Error ? loadError.message : "Failed to load documents");
+    } finally {
+      if (showLoading) {
         setIsLoading(false);
       }
-    };
-
-    void loadDocuments();
+    }
   }, []);
+
+  useEffect(() => {
+    void loadDocuments(true);
+  }, [loadDocuments]);
+
+  useEffect(() => {
+    const hasActiveIngestion = documents.some((doc) => ACTIVE_STATUSES.has(doc.status));
+    if (!hasActiveIngestion) {
+      return;
+    }
+
+    const intervalId = window.setInterval(() => {
+      void loadDocuments(false);
+    }, 3500);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [documents, loadDocuments]);
 
   const filtered = documents.filter((d) => d.fileName.toLowerCase().includes(search.toLowerCase()));
 
@@ -47,7 +68,10 @@ const DocumentsView = () => {
       setIsUploading(true);
       setError(null);
       const uploaded = await uploadDocument(file);
-      setDocuments((prev) => [uploaded, ...prev]);
+      setDocuments((prev) => {
+        const next = [uploaded, ...prev.filter((doc) => doc.id !== uploaded.id)];
+        return next;
+      });
     } catch (uploadError) {
       setError(uploadError instanceof Error ? uploadError.message : "Upload failed");
     } finally {
@@ -80,8 +104,19 @@ const DocumentsView = () => {
       <div className="max-w-4xl mx-auto px-6 lg:px-8 py-10 space-y-10">
         {/* Header */}
         <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}>
-          <h1 className="text-3xl font-extrabold tracking-tight text-foreground">Documents</h1>
-          <p className="text-sm text-muted-foreground mt-2">Upload files and they'll be chunked, embedded, and searchable by AI.</p>
+          <div className="flex items-center justify-between gap-4 flex-wrap">
+            <div>
+              <h1 className="text-3xl font-extrabold tracking-tight text-foreground">Documents</h1>
+              <p className="text-sm text-muted-foreground mt-2">Upload files and they'll be chunked, embedded, and searchable by AI.</p>
+            </div>
+            <button
+              onClick={() => { void loadDocuments(true); }}
+              className="inline-flex items-center gap-2 px-3 py-2 rounded-xl border border-glass-border/30 bg-surface-1/70 hover:bg-surface-2 text-xs font-medium text-foreground transition-colors"
+            >
+              <RefreshCw className="w-3.5 h-3.5" />
+              Refresh
+            </button>
+          </div>
         </motion.div>
 
         {/* Upload */}
@@ -120,6 +155,12 @@ const DocumentsView = () => {
         {error && (
           <div className="rounded-xl border border-destructive/30 bg-destructive/10 px-4 py-2 text-xs text-destructive">
             {error}
+          </div>
+        )}
+
+        {!error && documents.some((doc) => ACTIVE_STATUSES.has(doc.status)) && (
+          <div className="rounded-xl border border-warning/25 bg-warning/10 px-4 py-2 text-xs text-warning">
+            Indexing in progress. This page auto-refreshes every few seconds.
           </div>
         )}
 

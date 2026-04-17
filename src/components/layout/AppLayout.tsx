@@ -39,9 +39,13 @@ const AppLayout = () => {
   }, []);
 
   return (
-    <div className="flex h-screen overflow-hidden bg-background">
+    <div className="relative flex h-screen overflow-hidden bg-background app-atmosphere">
+      <div className="pointer-events-none absolute inset-0 z-0">
+        <div className="absolute -top-24 -left-24 h-72 w-72 rounded-full bg-primary/15 blur-3xl" />
+        <div className="absolute top-24 right-8 h-64 w-64 rounded-full bg-accent/15 blur-3xl" />
+      </div>
       <Sidebar activeView={activeView} onViewChange={setActiveView} user={user} onLogout={logout} />
-      <main className="flex-1 overflow-hidden">
+      <main className="relative z-10 flex-1 overflow-hidden">
         <AnimatePresence mode="wait">
           <motion.div
             key={activeView}

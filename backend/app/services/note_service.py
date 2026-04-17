@@ -5,8 +5,12 @@ from fastapi import HTTPException, status
 
 from app.db.mongodb import get_notes_collection
 from app.models.schemas import NoteCreate, NoteRead, NoteUpdate
+from app.core.logging import get_logger
 from app.services.cache_service import cache_service
 from app.services.rag_service import rag_service
+
+
+logger = get_logger(__name__)
 
 
 class NoteService:
@@ -48,14 +52,24 @@ class NoteService:
         result = await notes.insert_one(doc)
         note_id = str(result.inserted_id)
 
-        rag_service.add_source(
-            user_id=user_id,
-            source_type="note",
-            source_id=note_id,
-            source_label=f"Note: {doc['title']}",
-            text=doc["content"],
-            doc_type="note",
-        )
+        try:
+            rag_service.add_source(
+                user_id=user_id,
+                source_type="note",
+                source_id=note_id,
+                source_label=f"Note: {doc['title']}",
+                text=doc["content"],
+                doc_type="note",
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "note_indexing_degraded",
+                extra={
+                    "event": "note_indexing_degraded",
+                    "user_id": user_id,
+                    "details": str(exc),
+                },
+            )
 
         await cache_service.delete_prefix(f"dashboard:{user_id}")
         await cache_service.delete_prefix(f"retrieval:{user_id}")
@@ -78,15 +92,25 @@ class NoteService:
         await notes.update_one({"_id": note["_id"]}, {"$set": update_payload})
         note.update(update_payload)
 
-        rag_service.remove_source(user_id=user_id, source_type="note", source_id=note_id)
-        rag_service.add_source(
-            user_id=user_id,
-            source_type="note",
-            source_id=note_id,
-            source_label=f"Note: {note['title']}",
-            text=note["content"],
-            doc_type="note",
-        )
+        try:
+            rag_service.remove_source(user_id=user_id, source_type="note", source_id=note_id)
+            rag_service.add_source(
+                user_id=user_id,
+                source_type="note",
+                source_id=note_id,
+                source_label=f"Note: {note['title']}",
+                text=note["content"],
+                doc_type="note",
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "note_reindexing_degraded",
+                extra={
+                    "event": "note_reindexing_degraded",
+                    "user_id": user_id,
+                    "details": str(exc),
+                },
+            )
 
         await cache_service.delete_prefix(f"dashboard:{user_id}")
         await cache_service.delete_prefix(f"retrieval:{user_id}")
@@ -99,7 +123,17 @@ class NoteService:
         if result.deleted_count == 0:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Note not found")
 
-        rag_service.remove_source(user_id=user_id, source_type="note", source_id=note_id)
+        try:
+            rag_service.remove_source(user_id=user_id, source_type="note", source_id=note_id)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "note_deindexing_degraded",
+                extra={
+                    "event": "note_deindexing_degraded",
+                    "user_id": user_id,
+                    "details": str(exc),
+                },
+            )
         await cache_service.delete_prefix(f"dashboard:{user_id}")
         await cache_service.delete_prefix(f"retrieval:{user_id}")
 

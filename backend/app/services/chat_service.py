@@ -67,14 +67,41 @@ class ChatService:
             conversation_doc = {**new_doc, "_id": result.inserted_id}
             conversation_id = str(result.inserted_id)
 
-        rag_sources = await rag_service.query_hybrid(
-            user_id=user_id,
-            query_text=query,
-            top_k=self.settings.rag_top_k,
-            source_types=source_types or ["note", "document"],
-            doc_type=document_type,
-        )
-        memory_sources = await memory_service.retrieve_relevant_memories(user_id=user_id, query=query, limit=self.settings.memory_top_k)
+        try:
+            rag_sources = await rag_service.query_hybrid(
+                user_id=user_id,
+                query_text=query,
+                top_k=self.settings.rag_top_k,
+                source_types=source_types or ["note", "document"],
+                doc_type=document_type,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "chat_retrieval_degraded",
+                extra={
+                    "event": "chat_retrieval_degraded",
+                    "user_id": user_id,
+                    "details": str(exc),
+                },
+            )
+            rag_sources = []
+
+        try:
+            memory_sources = await memory_service.retrieve_relevant_memories(
+                user_id=user_id,
+                query=query,
+                limit=self.settings.memory_top_k,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "chat_memory_retrieval_degraded",
+                extra={
+                    "event": "chat_memory_retrieval_degraded",
+                    "user_id": user_id,
+                    "details": str(exc),
+                },
+            )
+            memory_sources = []
 
         history = conversation_doc.get("messages", [])[-8:]
         answer = await self._generate_answer(query=query, history=history, rag_sources=rag_sources, memory_sources=memory_sources)
@@ -95,7 +122,17 @@ class ChatService:
             {"$set": {"messages": message_history, "updated_at": now}},
         )
 
-        await memory_service.save_interaction_memories(user_id=user_id, query=query, answer=answer)
+        try:
+            await memory_service.save_interaction_memories(user_id=user_id, query=query, answer=answer)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "chat_memory_save_degraded",
+                extra={
+                    "event": "chat_memory_save_degraded",
+                    "user_id": user_id,
+                    "details": str(exc),
+                },
+            )
         await cache_service.delete_prefix(f"dashboard:{user_id}")
 
         combined_sources = [self._serialize_source(item) for item in rag_sources + memory_sources]

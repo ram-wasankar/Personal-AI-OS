@@ -22,20 +22,22 @@ const ChatView = () => {
     },
   ]);
   const [input, setInput] = useState("");
-  const [isLoading, setIsLoading] = useState(false);
+  const [isStreaming, setIsStreaming] = useState(false);
+  const [isUploadingDocument, setIsUploadingDocument] = useState(false);
   const [conversationId, setConversationId] = useState<string | undefined>(undefined);
   const [error, setError] = useState<string | null>(null);
   const [expandedMessageIds, setExpandedMessageIds] = useState<Record<string, boolean>>({});
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const isBusy = isStreaming || isUploadingDocument;
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
   const handleSend = async () => {
-    if (!input.trim() || isLoading) return;
+    if (!input.trim() || isBusy) return;
 
     setError(null);
     const userMsg: Message = { id: Date.now().toString(), role: "user", content: input.trim() };
@@ -52,7 +54,7 @@ const ChatView = () => {
       },
     ]);
     setInput("");
-    setIsLoading(true);
+    setIsStreaming(true);
 
     try {
       await streamChatMessage(userMsg.content, conversationId, {
@@ -98,7 +100,7 @@ const ChatView = () => {
         ),
       ]);
     } finally {
-      setIsLoading(false);
+      setIsStreaming(false);
     }
   };
 
@@ -116,15 +118,19 @@ const ChatView = () => {
     }
 
     setError(null);
-    setIsLoading(true);
+    setIsUploadingDocument(true);
     try {
       const uploaded = await uploadDocument(selectedFile);
+      const processingStatus = uploaded.status === "ready" || uploaded.status === "indexed" ? "ready" : uploaded.status;
       setMessages((prev) => [
         ...prev,
         {
           id: `${Date.now()}-upload`,
           role: "assistant",
-          content: `Uploaded and indexed ${uploaded.fileName} with ${uploaded.chunks} chunks. You can ask questions about it now.`,
+          content:
+            processingStatus === "ready"
+              ? `Uploaded and indexed ${uploaded.fileName} with ${uploaded.chunks} chunks. You can ask questions about it now.`
+              : `Uploaded ${uploaded.fileName}. It is currently ${processingStatus}; ask in a few seconds while indexing finishes.`,
           sources: [
             {
               sourceId: uploaded.id,
@@ -140,7 +146,7 @@ const ChatView = () => {
     } catch (uploadError) {
       setError(uploadError instanceof Error ? uploadError.message : "Upload failed");
     } finally {
-      setIsLoading(false);
+      setIsUploadingDocument(false);
       event.target.value = "";
     }
   };
@@ -246,7 +252,7 @@ const ChatView = () => {
           </AnimatePresence>
 
           {/* Loading */}
-          {isLoading && (
+          {isStreaming && (
             <motion.div
               initial={{ opacity: 0, y: 12 }}
               animate={{ opacity: 1, y: 0 }}
@@ -272,6 +278,10 @@ const ChatView = () => {
                 <span className="text-xs text-muted-foreground ml-2">Searching your knowledge base...</span>
               </div>
             </motion.div>
+          )}
+
+          {isUploadingDocument && (
+            <p className="pl-7 text-xs text-warning">Uploading and indexing document...</p>
           )}
 
           <div ref={messagesEndRef} />
@@ -305,7 +315,7 @@ const ChatView = () => {
             />
             <motion.button
               onClick={handleSend}
-              disabled={!input.trim() || isLoading}
+              disabled={!input.trim() || isBusy}
               whileHover={{ scale: 1.05 }}
               whileTap={{ scale: 0.95 }}
               className="p-2.5 rounded-xl bg-gradient-to-r from-primary to-primary text-primary-foreground transition-all duration-200 disabled:opacity-30 disabled:cursor-not-allowed shrink-0 hover:glow-sm-primary"
