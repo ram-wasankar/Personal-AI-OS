@@ -102,8 +102,8 @@ const AuthPage = () => {
         transition={{ duration: 0.45 }}
         className="relative z-10 min-h-screen w-full"
       >
-        <div className="absolute inset-0 flex items-center justify-center px-6 pointer-events-none">
-          <h1 className="text-[#f3f705] uppercase font-extrabold text-center tracking-[-0.05em] leading-[0.9] text-[13vw] sm:text-[11vw] md:text-[9vw] lg:text-[7vw] drop-shadow-[0_8px_26px_rgba(80,40,0,0.35)]">
+        <div className="absolute inset-0 flex items-center justify-center sm:justify-start px-6 sm:pl-12 sm:pr-[25rem] lg:pl-16 lg:pr-[31rem] pointer-events-none">
+          <h1 className="text-[#f3f705] uppercase font-extrabold text-center sm:text-left tracking-[-0.05em] leading-[0.9] text-[13vw] sm:text-[11vw] md:text-[9vw] lg:text-[7vw] drop-shadow-[0_8px_26px_rgba(80,40,0,0.35)]">
             Personal AI OS
           </h1>
         </div>
