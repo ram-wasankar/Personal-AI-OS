@@ -21,6 +21,8 @@ services:
         generateValue: true
       - key: CORS_ORIGINS
         value: "https://personal-ai-os-six.vercel.app,http://localhost:8080,http://127.0.0.1:8080"
+      - key: CORS_ORIGIN_REGEX
+        value: "https://.*\\.vercel\\.app"
       - key: OPENAI_API_KEY
         sync: false
       - key: OPENAI_MODEL

@@ -181,6 +181,18 @@ This repository is configured for reliable cross-platform connection:
 	- `/uploads/*` -> Render backend `/uploads/*`
 4. Redeploy both services.
 
+### Critical: Vercel deployment protection and API failures
+
+If Vercel Deployment Protection (Vercel Authentication / Password Protection) is enabled on preview deployments,
+API routes can return HTML `401` responses before your app code runs. This breaks login/signup/chat/upload flows.
+
+To avoid this:
+
+1. In Vercel Project Settings, disable deployment protection for environments where end users test the app, or use a bypass link.
+2. Keep backend CORS configured to allow preview domains:
+	- `CORS_ORIGIN_REGEX=https://.*\\.vercel\\.app`
+3. Optionally set frontend `VITE_RENDER_API_URL` so preview apps can call Render directly.
+
 ### Local development
 
 - Set `VITE_API_URL=http://localhost:8000` in root `.env`.

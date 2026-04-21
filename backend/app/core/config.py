@@ -51,6 +51,7 @@ class Settings(BaseSettings):
         default_factory=lambda: ["http://localhost:8080", "http://127.0.0.1:8080"],
         alias="CORS_ORIGINS",
     )
+    cors_origin_regex: str | None = Field(default=r"https://.*\.vercel\.app", alias="CORS_ORIGIN_REGEX")
 
     max_upload_mb: int = Field(default=25, alias="MAX_UPLOAD_MB")
 
@@ -112,6 +113,14 @@ class Settings(BaseSettings):
         if isinstance(value, (list, tuple, set)):
             return [str(item).strip() for item in value if str(item).strip()]
 
+        return value
+
+    @field_validator("cors_origin_regex", mode="before")
+    @classmethod
+    def parse_cors_origin_regex(cls, value: object) -> object:
+        if isinstance(value, str):
+            normalized = value.strip()
+            return normalized or None
         return value
 
     @property

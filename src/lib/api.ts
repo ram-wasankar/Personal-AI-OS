@@ -115,8 +115,29 @@ class ApiRequestError extends Error {
   }
 }
 
-const runtimeImportMeta = import.meta as ImportMeta & { env?: { VITE_API_URL?: string } };
-const API_BASE_URL = (runtimeImportMeta.env?.VITE_API_URL ?? "").trim();
+const runtimeImportMeta = import.meta as ImportMeta & {
+  env?: {
+    VITE_API_URL?: string;
+    VITE_RENDER_API_URL?: string;
+  };
+};
+
+const DEFAULT_RENDER_API_URL = "https://personal-ai-os-eo1j.onrender.com";
+
+function resolveApiBaseUrl(): string {
+  const explicitApiUrl = (runtimeImportMeta.env?.VITE_API_URL ?? "").trim();
+  if (explicitApiUrl) {
+    return explicitApiUrl;
+  }
+
+  if (typeof window !== "undefined" && window.location.hostname.endsWith(".vercel.app")) {
+    return (runtimeImportMeta.env?.VITE_RENDER_API_URL ?? DEFAULT_RENDER_API_URL).trim();
+  }
+
+  return "";
+}
+
+const API_BASE_URL = resolveApiBaseUrl();
 const TOKEN_KEY = "synapse_keeper_token";
 const USER_KEY = "synapse_keeper_user";
 
@@ -173,6 +194,13 @@ export function clearAuthSession(): void {
 }
 
 async function parseErrorMessage(response: Response): Promise<string> {
+  const contentType = response.headers.get("content-type") ?? "";
+  const vercelRequestId = response.headers.get("x-vercel-id");
+
+  if (response.status === 401 && vercelRequestId && contentType.includes("text/html")) {
+    return "Deployment is protected by Vercel authentication. Disable deployment protection or use a shareable bypass link.";
+  }
+
   try {
     const payload = await response.json();
     if (typeof payload?.detail === "string") {
